@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.6;
 pragma experimental ABIEncoderV2;
+// pragma abicoder v2;
 
 import {Test, console} from "forge-std/Test.sol";
 import {PuppyRaffle} from "../src/PuppyRaffle.sol";
+import {Nowithdraw} from "../src/Nowithdraw.sol";
 
 contract PuppyRaffleTest is Test {
     PuppyRaffle puppyRaffle;
+    Nowithdraw attacker;
     uint256 entranceFee = 1e18;
     address playerOne = address(1);
     address playerTwo = address(2);
@@ -21,6 +24,7 @@ contract PuppyRaffleTest is Test {
             feeAddress,
             duration
         );
+        attacker = new Nowithdraw(puppyRaffle);
     }
 
     //////////////////////
@@ -34,6 +38,7 @@ contract PuppyRaffleTest is Test {
         assertEq(puppyRaffle.players(0), playerOne);
     }
 
+    
     function testCantEnterWithoutPaying() public {
         address[] memory players = new address[](1);
         players[0] = playerOne;
@@ -213,4 +218,39 @@ contract PuppyRaffleTest is Test {
         puppyRaffle.withdrawFees();
         assertEq(address(feeAddress).balance, expectedPrizeAmount);
     }
-}
+    // @audit-tests
+    function testdos_attack(address[] memory newPlayers) public {
+        puppyRaffle.enterRaffle{value:entranceFee*newPlayers.length}(newPlayers);
+        for(uint256 i; i < newPlayers.length ; i++){
+            assertEq(puppyRaffle.getActivePlayerIndex(newPlayers[i]), i);
+        }
+    }
+     
+    function testwinnerrandomness() public playersEntered {
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+
+        uint256 expectedPrizeAmount = ((entranceFee * 4) * 20) / 100;
+        uint256 winnerindex = uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % 4;
+        console.log("winner index is", winnerindex);
+       
+        //   assertEq(winnerindex , winnerIndex);       
+    }
+  // @audit-issue : User can no more withdraw because of mishandling of eth.
+    function testnomorewithdraw() public playersEntered {
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+
+        uint256 expectedPrizeAmount = ((entranceFee * 4) * 20) / 100;
+        puppyRaffle.selectWinner();
+        console.log("balance of raffle is",address(puppyRaffle).balance);
+        attacker.attack{value : 1 ether }();
+        console.log("balance of raffle is",address(puppyRaffle).balance);
+        
+        // vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+        assertEq(address(feeAddress).balance, expectedPrizeAmount);
+                   
+    }
+
+ }

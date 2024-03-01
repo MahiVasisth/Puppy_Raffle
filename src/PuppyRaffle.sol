@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
+//@audit-issue : compiler version
 pragma solidity ^0.7.6;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Base64} from "lib/base64/base64.sol";
-
+import {console} from "forge-std/Test.sol";
 /// @title PuppyRaffle
 /// @author PuppyLoveDAO
 /// @notice This project is to enter a raffle to win a cute dog NFT. The protocol should do the following:
@@ -17,7 +18,7 @@ import {Base64} from "lib/base64/base64.sol";
 /// 5. The owner of the protocol will set a feeAddress to take a cut of the `value`, and the rest of the funds will be sent to the winner of the puppy.
 contract PuppyRaffle is ERC721, Ownable {
     using Address for address payable;
-
+//done
     uint256 public immutable entranceFee;
 
     address[] public players;
@@ -76,6 +77,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice they have to pay the entrance fee * the number of players
     /// @notice duplicate entrants are not allowed
     /// @param newPlayers the list of players to enter the raffle
+    //@audit : dos possible
     function enterRaffle(address[] memory newPlayers) public payable {
         require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
         for (uint256 i = 0; i < newPlayers.length; i++) {
@@ -97,7 +99,7 @@ contract PuppyRaffle is ERC721, Ownable {
         address playerAddress = players[playerIndex];
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
         require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
-
+ // @audit : reentrancy possible
         payable(msg.sender).sendValue(entranceFee);
 
         players[playerIndex] = address(0);
@@ -122,15 +124,22 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @dev we use a hash of on-chain data to generate the random numbers
     /// @dev we reset the active players array after the winner is selected
     /// @dev we send 80% of the funds to the winner, the other 20% goes to the feeAddress
-    function selectWinner() external {
+    // audit-requirements :
+    // winner must be the part of protocol timestam after winner declaration array must be empty  and new list start ,
+    //  timestamp updtaed,
+    function selectWinner() external returns(uint256) {
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+       // @audit : use of block.timestamp and block.difficulty
         uint256 winnerIndex =
             uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+            console.log("winner index is",winnerIndex);
         address winner = players[winnerIndex];
         uint256 totalAmountCollected = players.length * entranceFee;
+        // @audit : overflow possible
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
+        // @audit-issue : rounding issue
         totalFees = totalFees + uint64(fee);
 
         uint256 tokenId = totalSupply();
@@ -151,9 +160,11 @@ contract PuppyRaffle is ERC721, Ownable {
         (bool success,) = winner.call{value: prizePool}("");
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
         _safeMint(winner, tokenId);
+        return winnerIndex;
     }
 
     /// @notice this function will withdraw the fees to the feeAddress
+    // @audit-issue : user no more withdraw if the contract balance is increase by one 
     function withdrawFees() external {
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
